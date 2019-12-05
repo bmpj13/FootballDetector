@@ -4,23 +4,40 @@ import random
 import math
 
 debug = True
-homography_points = []
 
-def add_homography_points(event, x, y, flags, param):
-    global img, homography_points
+class Homo:
+    homography_points = []
+    homography = []
+    img = []
 
-    if event == cv.EVENT_LBUTTONDOWN:
+    def __init__(self, img):
+        self.img = img
 
-        if homography_points.count >= 4:
-            #Skip to next phase
-            return
+    def calculate_homography(self):
+        rw_points = np.array([[11,5.5],[29.32,5.5],[12.85,16.5],[27.47,16.5]])
 
-        
-        print(x,', ',y)
-        font = cv.FONT_HERSHEY_SIMPLEX
-        strXY = str(x) + ', ' + str(y)
-        cv.circle(img, (x,y), 10, (255,0,0))
-        cv.imshow('Select 4 Points', img)
+        self.homography, status = cv.findHomography(np.array(self.homography_points), rw_points)
+
+    def drawGoalCircle(self):
+        rw_goalPoint = np.array([[20.16,0]]).reshape(-1,1,2)
+
+        img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))
+        tuple_goalPoint = (int(img_goalPoint[0][0][0]),int(img_goalPoint[0][0][1]))  
+
+        cv.circle(img,tuple_goalPoint,10,(0,255,0))  
+        cv.imshow('Select 4 Points', self.img) 
+
+    def add_homography_points(self, event, x, y, flags, param):
+        if event == cv.EVENT_LBUTTONDOWN:
+            if len(self.homography_points) < 4:
+                print(x,', ',y)
+                cv.circle(img, (x,y), 10, (255,0,0))
+                cv.imshow('Select 4 Points', self.img)
+                self.homography_points.append([x,y])
+
+            if len(self.homography_points) >= 4:
+                self.calculate_homography()
+                self.drawGoalCircle()
 
 def loadImage(filename):
     img = cv.imread(filename)
@@ -31,12 +48,13 @@ def loadImage(filename):
     return img
 
 if __name__ == "__main__":
-    global img
     for i in range(1, 4):
         filename = 'images/{}.png'.format(i)
         img = loadImage(filename)
 
-        cv.setMouseCallback('Select 4 Points', add_homography_points)
+        homo = Homo(img)
+
+        cv.setMouseCallback('Select 4 Points', homo.add_homography_points)
 
         cv.waitKey(0)
     cv.destroyAllWindows()
