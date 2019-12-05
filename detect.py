@@ -214,15 +214,15 @@ for i in range(1, 4):
     img, img_gray = loadImage(filename)
     gradient = imageGradient(img_gray)
     img_contours, field_lines = getField(gradient)
-    points = getInterestPoints(img_contours, field_lines)
+    # points = getInterestPoints(img_contours, field_lines)
 
-    # IN PROGRESS:
-    H, H_inv = getHomography(points)
-    test = cv.perspectiveTransform(np.float32([0,11]).reshape(1, 1, -1), H_inv)
-    x,y = test[0,0,:]
-    print(x,y)
-    cv.circle(img, (x,y), 3, (255, 0, 0), -1)
-    cv.imshow('TEST', img)
+    # # IN PROGRESS:
+    # H, H_inv = getHomography(points)
+    # test = cv.perspectiveTransform(np.float32([0,11]).reshape(1, 1, -1), H_inv)
+    # x,y = test[0,0,:]
+    # print(x,y)
+    # cv.circle(img, (x,y), 3, (255, 0, 0), -1)
+
     cv.waitKey(0)
 
 
