@@ -14,34 +14,13 @@ def get_box_values(box):
 
     return x, y, width, height, angle
 
-def should_group(img_shape, group, line, toleranceM, minIntersectDistance):
-    height, width = img_shape
+def bounding_box_info(img, pts):
+    mask = np.zeros(img.shape, np.uint8)
+    mask = cv.drawContours(mask, [pts], -1, 255, -1)
+    img_roi = img.copy()
+    img_roi[mask == 0] = 128
 
-    (avg_vx, avg_vy), group_lines = group
-    avg_m = avg_vy / avg_vx
-    
-    a, c = vector2cartesian(line) # y = a*x + c
-
-    if abs(avg_m-a) < toleranceM:
-        j = 0
-        while j < len(group_lines):
-            b, d = vector2cartesian(group_lines[j]) # y = b*x + d
-
-            if a == b: # lines are parallel
-                return True
-            else:
-                x = (d-c) / (a-b)
-                y = (a*d - b*c) / (a-b)
-
-                if (x >= -minIntersectDistance and x <= width + minIntersectDistance) and (y >= -minIntersectDistance and y <= height + minIntersectDistance):
-                    return False
-
-            j += 1
-
-        if j == len(group_lines):
-            return True
-    
-    return False
+    return len(img_roi[img_roi == 0]), len(img_roi[img_roi == 255])
 
 def cross_product(vec1, vec2):
     (x1, y1) = vec1
@@ -54,10 +33,76 @@ def vector2cartesian(line):
     axisy = y0 - slope * x0
     return slope, axisy
 
+def points2cartesian(line):
+    x1, y1, x2, y2 = line
+    m = (y2-y1)/(x2-x1)
+    b = y1 - m*x1
+    return m, b
+
+def increment_average(avg, count, value):
+    # https://math.stackexchange.com/questions/106700/incremental-averageing
+    return avg + ((value - avg) / count)
+
+def find_best_group(cartesian_line, groups, toleranceM, toleranceB):
+    in_tolerance = lambda l,g: abs(l[0] - g[0]) < toleranceM and abs(l[1] - g[1]) < toleranceB
+
+    m, b = cartesian_line
+
+    index = -1
+    min_m_diff = 9999
+    for i, group in enumerate(groups):
+        (avg_m, avg_b), _ = group
+
+        if in_tolerance((m, b), (avg_m, avg_b)):
+            m_diff = abs(m - avg_m)
+            
+            if m_diff < min_m_diff:
+                min_m_diff = m_diff
+                index = i
+
+    return index != -1, index
+
+def no_intersection(line, group_lines, width, height, distance):
+    for gl in group_lines:
+        a, c = vector2cartesian(line)
+        b, d = vector2cartesian(gl)
+
+        if a == b:  # parallel
+            return True
+
+        x = (d-c) / (a-b)
+        y = (a*d - b*c) / (a-b)
+
+        if (x >= -distance and x <= width + distance) and (y >= -distance and y <= height + distance):
+            return False
+    return True
+
+def find_best_fit_group(shape, line, groups, toleranceM, minIntersectDistance):
+    in_tolerance = lambda l,g: abs(l - g) < toleranceM
+
+    height, width = shape
+    m, b = vector2cartesian(line)
+
+    index = -1
+    min_m_diff = 9999
+    for i, group in enumerate(groups):
+        (avg_vx, avg_vy), group_lines = group
+        avg_m = avg_vy / avg_vx
+
+        if in_tolerance(m, avg_m) and no_intersection(line, group_lines, width, height, minIntersectDistance):
+            m_diff = abs(m - avg_m)
+            
+            if m_diff < min_m_diff:
+                min_m_diff = m_diff
+                index = i
+
+    return index != -1, index
+
 
 
 def loadImage(filename):
     img = cv.imread(filename)
+    img = cv.resize(img, (800, 400), interpolation=cv.INTER_AREA)
     img_gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
     
     if debug:
@@ -67,53 +112,42 @@ def loadImage(filename):
     return img, img_gray
 
 
-def getField(img_gray):
-    # Compute image's gradient
-    blur = cv.blur(img_gray, ksize=(5,5))
-    sobelx = cv.Sobel(blur, cv.CV_64F, 1, 0, ksize=-1)
-    sobely = cv.Sobel(blur, cv.CV_64F, 0, 1, ksize=-1)
-    gradient = cv.add(sobelx, sobely)
-    gradient = cv.convertScaleAbs(gradient)
 
-    # We expect the field to have a small gradient
-    _, gradient_threshold = cv.threshold(gradient, 80, 255, cv.THRESH_BINARY_INV)
+def getField(img):
+    hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
 
-    # Opening
-    opening = cv.morphologyEx(gradient_threshold, cv.MORPH_OPEN, np.ones((17,17), np.uint8))
+    # Green HSV: (60, 255, 255)
+    lower_green = np.array([30, 50, 50])
+    upper_green = np.array([80, 255, 255])
 
-    # Closing
-    closing = cv.morphologyEx(opening, cv.MORPH_CLOSE, np.ones((31,31), np.uint8))
+    mask = cv.inRange(hsv, lower_green, upper_green)
+    mask = cv.morphologyEx(mask, cv.MORPH_OPEN, np.ones((11,11), np.uint8))
+    mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, np.ones((15,15), np.uint8))
 
     # The largest contour is considered the field
-    contours, _ = cv.findContours(closing, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
     contour = sorted(contours, key=cv.contourArea)[-1]
 
     # Compute field
-    field = np.zeros(img_gray.shape, np.uint8)
+    field = np.zeros(img.shape[0:2], np.uint8)
     field = cv.drawContours(field, [contour], -1, 255, -1)
-    field = cv.dilate(field, np.ones((21,21), np.uint8)) # apply dilation to recover possible line losses with previous operations
 
     if debug:
-        img_test1 = cv.cvtColor(img_gray, cv.COLOR_GRAY2BGR)
-        img_test1 = cv.bitwise_and(img_test1, img_test1, mask=field)
-        cv.imshow('Gradient', gradient)
-        cv.imshow('Gradient Threshold', gradient_threshold)
-        cv.imshow('Opening', opening)
-        cv.imshow('Closing', closing)
-        cv.imshow('Field', img_test1)
+        img_debug = cv.bitwise_and(img, img, mask=field)
+        cv.imshow('Field Mask', mask)
+        cv.imshow('Field', img_debug)
 
     return field
 
 
 
 # Applies Canny detection followed by filtering using HoughP
-def getCannyLines(img_gray, field, minWidth = 50, minBlackWhiteRatio = 3.0, offset = 10, minSupport = 0.65):
+def getCannyLines(img_gray, field, boundingHeight = 3, minSupport = 0.9, minBlackWhiteRatio = 1.5):
     img = cv.bitwise_and(img_gray, img_gray, mask=field)
-    canny = cv.Canny(img, 30, 120)
-    blur = cv.blur(canny, (3, 3))
-    closed = cv.morphologyEx(canny, cv.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    canny = cv.Canny(img, 30, 100)
+    closed = cv.morphologyEx(canny, cv.MORPH_CLOSE, np.ones((boundingHeight, boundingHeight), np.uint8))
 
-    lines = cv.HoughLinesP(blur, 1, np.pi / 180, 55, minLineLength=60, maxLineGap=10)
+    lines = cv.HoughLinesP(canny, 1, np.pi / 180, 40, minLineLength=50, maxLineGap=10)
     lines = lines[:, 0, :] if lines is not None else []
 
     canny_lines = []
@@ -121,34 +155,24 @@ def getCannyLines(img_gray, field, minWidth = 50, minBlackWhiteRatio = 3.0, offs
         x1, y1, x2, y2 = line
         
         rbox = cv.minAreaRect(np.array([(x1, y1), (x2, y2)], np.float32))
-        x, y, width, height, angle = get_box_values(rbox)
-        if angle == 0.0 or angle == 90.0:
+        x, y, width, _, angle = get_box_values(rbox)
+        if angle == 0.0 or angle == 90.0 or width == 0:
             continue
-        if width < minWidth:
-            continue
+        
+        height = boundingHeight
+        pts1 = cv.boxPoints(((x,y), (width, height), angle)).astype(np.int32)
+        _, whites = bounding_box_info(closed, pts1)
+        support = whites / (width * height)
 
-        pts = cv.boxPoints(rbox).astype(np.int32)
-        mask = np.zeros(closed.shape, np.uint8)
-        mask = cv.drawContours(mask, [pts], -1, 255, -1)
-        img_roi = closed.copy()
-        img_roi[mask == 0] = 120
-        support = len(img_roi[img_roi == 255]) / width
         if support <= minSupport:
             continue
 
-        height += offset * 2
-        rbox = ((x,y), (width, height), angle)
-        pts = cv.boxPoints(rbox).astype(np.int32)
-        mask = np.zeros(closed.shape, np.uint8)
-        mask = cv.drawContours(mask, [pts], -1, 255, -1)
-        img_roi = closed.copy()
-        img_roi[mask == 0] = 120
-        blacks = len(img_roi[img_roi == 0])
-        whites = len(img_roi[img_roi == 255])
+        height *= 4
+        pts2 = cv.boxPoints(((x,y), (width, height), angle)).astype(np.int32)
+        blacks, whites = bounding_box_info(closed, pts2)
         black_white_ratio = blacks / whites
-        if blacks == 0 or whites == 0: # noisy data
-            continue
-        if black_white_ratio <= minBlackWhiteRatio: # there should be more black than white around the detected line
+        
+        if black_white_ratio < minBlackWhiteRatio:
             continue
 
         canny_lines.append(line)
@@ -156,7 +180,7 @@ def getCannyLines(img_gray, field, minWidth = 50, minBlackWhiteRatio = 3.0, offs
     
     if debug:
         img_test = cv.cvtColor(closed, cv.COLOR_GRAY2BGR)
-        for line in lines:
+        for line in canny_lines:
             x1, y1, x2, y2 = line
             cv.line(img_test, (x1, y1), (x2, y2), (0, 0, 255), thickness=1)
         cv.imshow('Canny', canny)
@@ -167,44 +191,46 @@ def getCannyLines(img_gray, field, minWidth = 50, minBlackWhiteRatio = 3.0, offs
 
 
 # Group together lines with similar 'm' and 'b' (y = m*x + b)
-def groupLines(img, canny_lines, toleranceM = 0.12, toleranceB = 20):
-    bins = []
-    for x1, y1, x2, y2 in canny_lines:
-        if x2-x1 == 0:
+def groupLines(img, canny_lines, toleranceM = 0.1, toleranceB = 10):
+    groups = []
+    for line in canny_lines:
+        x1, y1, x2, y2 = line
+        if x2 - x1 == 0:
             continue
 
-        m = (y2-y1)/(x2-x1)
-        b = y1 - m*x1
+        m, b = points2cartesian(line)
+        found, index = find_best_group((m, b), groups, toleranceM, toleranceB)
 
-        i = 0
-        while i < len(bins):
-            bin_m, bin_b, bin_lines = bins[i]
-            if abs(bin_m-m) < toleranceM and abs(bin_b-b) < toleranceB:
-                bin_lines.append((x1, y1, x2, y2))
-                bins[i] = ( (bin_m+m)/2, (bin_b+b)/2, bin_lines )
-                break
-            i += 1
-        if i == len(bins):
-            bins.append((m, b, [(x1, y1, x2, y2)]))
+        if found:
+            (avg_m, avg_b), group_lines = groups[index]
+            n = len(group_lines)
+            avg_m = increment_average(avg_m, n, m)
+            avg_b = increment_average(avg_b, n, b)
+            group_lines.append(line)
+            groups[index] = ((avg_m, avg_b), group_lines)
+        else:
+            groups.append(((m, b), [line]))
+
+    groups = np.array(groups)
 
     if debug:
         img_test = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
-        for _, _, lines in bins:
+        for _, lines in groups:
             color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
             for x1, y1, x2, y2 in lines:
-                m = (y2-y1)/(x2-x1)
+                m = (y2-y1) / (x2-x1)
                 b = y1 - m*x1
                 cv.line(img_test, (x1, y1), (x2, y2), color, 1)
         cv.imshow('Canny Lines Grouped', img_test)
 
-    return bins
+    return groups
 
 
 
 # Find best fit for each bin
 def fitGroupedLines(canny, bins):
     fitted_lines = []
-    for avg_m, avg_b, lines in bins:
+    for _, lines in bins:
         # Rearrange data to use in fitLine function.
         points = []
         for line in lines:
@@ -230,38 +256,76 @@ def fitGroupedLines(canny, bins):
 
     return fitted_lines
 
-def findBestLines(canny, fitted_lines, toleranceM = 0.17, minIntersectDistance = 500):
+
+def group_by_index(index, fitted_lines, groups, shape, toleranceM, minIntersectDistance):
+    line = fitted_lines[index]
+    vx, vy, x0, y0 = line
+    found, index = find_best_fit_group(shape, line, groups, toleranceM, minIntersectDistance)
+
+    if found:
+        (avg_vx, avg_vy), group_lines = groups[index]
+        n = len(group_lines)
+        avg_vx = increment_average(avg_vx, n, vx)
+        avg_vy = increment_average(avg_vy, n, vy)
+        group_lines.append(line)
+        groups[index] = ((avg_vx, avg_vy), group_lines)
+    else:
+        groups.append(((vx, vy), [line]))
+
+def findBestGroups(canny, fitted_lines, toleranceM = 0.3, minIntersectDistance = 500):
+    # Group lines according to their slope and minimum intersection distance
+    # We use a greedy approach, which might lead to erros. Since the the 'fitted_lines' are ordered by slope,
+    # we compute the group for the first and last line at every iteration (which reduces the error - a bit...)
     groups = []
-    for line in fitted_lines:
-        vx, vy, x0, y0 = line
+    for i in range(int(len(fitted_lines) / 2)):
+        group_by_index(i, fitted_lines, groups, canny.shape, toleranceM, minIntersectDistance)
+        group_by_index(len(fitted_lines)-1-i, fitted_lines, groups, canny.shape, toleranceM, minIntersectDistance)
 
-        i = 0
-        while i < len(groups):
-            (avg_vx, avg_vy), group_lines = groups[i]
-            if should_group(canny.shape, groups[i], line, toleranceM, minIntersectDistance):
-                group_lines.append(line)
-                groups[i] = ( ((avg_vx + vx)/2, (avg_vy + vy)/2), group_lines )
-                break
-            i += 1
-            
-        if i == len(groups):
-            groups.append( ((vx, vy), [line]) )
+    if len(fitted_lines) % 2 == 0:
+        group_by_index(int(len(fitted_lines) / 2) + 1, fitted_lines, groups, canny.shape, toleranceM, minIntersectDistance)
 
+    # Filter groups that only have one line
+    filtered_groups = []
+    for group in groups:
+        _, group_lines = group
+
+        if len(group_lines) > 1:
+            filtered_groups.append(group)
+
+    # Choose the lines that have a maximum cross product
     maxCrossProduct = 0
     group1 = []
     group2 = []
-    for i in range(len(groups)):
-        for j in range(i + 1, len(groups)):
-            u, _ = groups[i]
-            v, _ = groups[j]
+    for i in range(len(filtered_groups)):
+        for j in range(i + 1, len(filtered_groups)):
+            u, _ = filtered_groups[i]
+            v, _ = filtered_groups[j]
             cp = cross_product(u, v)
 
             if cp > maxCrossProduct:
                 maxCrossProduct = cp
-                group1 = groups[i]
-                group2 = groups[j]
+                group1 = filtered_groups[i]
+                group2 = filtered_groups[j]
 
     if debug:
+        img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
+        for _, lines in groups:
+            color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+            for vx, vy, x0, y0 in lines:
+                x1, y1 = int(x0 - 1000*vx), int(y0 - 1000*vy)
+                x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
+                cv.line(img_test, (x1,y1), (x2,y2), color, 2)
+        cv.imshow('Grouped Fitted Lines', img_test)
+
+        img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
+        for _, lines in filtered_groups:
+            color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+            for vx, vy, x0, y0 in lines:
+                x1, y1 = int(x0 - 1000*vx), int(y0 - 1000*vy)
+                x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
+                cv.line(img_test, (x1,y1), (x2,y2), color, 2)
+        cv.imshow('Filtered Grouped Fitted Lines', img_test)
+
         img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
         for _, lines in [group1, group2]:
             color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
@@ -275,12 +339,11 @@ def findBestLines(canny, fitted_lines, toleranceM = 0.17, minIntersectDistance =
     return [group1, group2]
 
 
-
-def findInterestPoints(canny, groups, imageOffset = 50):
+def findInterestPoints(canny, groups, imageOffset = 100):
     (_, lines1), (_, lines2) = groups
 
     img = canny.copy()
-    img = cv.copyMakeBorder(img, 0, 50, 0, 50, cv.BORDER_CONSTANT, value=255)
+    img = cv.copyMakeBorder(img, 0, imageOffset, 0, imageOffset, cv.BORDER_CONSTANT, value=0)
     height, width = img.shape
 
     points = []
@@ -309,16 +372,16 @@ def findInterestPoints(canny, groups, imageOffset = 50):
 
 
 if __name__ == "__main__":
-    for i in range(1, 4):
+    for i in range(1, 6):
         filename = 'images/{}.png'.format(i)
         img, img_gray = loadImage(filename)
 
-        field = getField(img_gray)
+        field = getField(img)
         canny, closed, canny_lines = getCannyLines(img_gray, field)
-        bins = groupLines(closed, canny_lines)
-        fitted_lines = fitGroupedLines(canny, bins)
-        groups = findBestLines(canny, fitted_lines)
-        # points = findInterestPoints(canny, groups)
+        groups = groupLines(closed, canny_lines)
+        fitted_lines = fitGroupedLines(canny, groups)
+        best_groups = findBestGroups(canny, fitted_lines)
+        points = findInterestPoints(canny, best_groups)
 
         cv.waitKey(0)
     cv.destroyAllWindows()
