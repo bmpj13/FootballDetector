@@ -5,6 +5,10 @@ import math
 
 debug = True
 
+
+
+''' Helpers '''
+
 def get_box_values(box):
     (x, y), (width, height), angle = box
     x, y, width, height = x, y, width, height
@@ -98,7 +102,16 @@ def find_best_fit_group(shape, line, groups, toleranceM, minIntersectDistance):
 
     return index != -1, index
 
+def get_point_id(v_id, h_id, v_lines, h_lines):
+    if len(v_lines) != 3 or len(h_lines) != 4:
+        return None
 
+    return h_id * 3 + v_id + 1
+
+
+
+
+''' API '''
 
 def loadImage(filename):
     img = cv.imread(filename)
@@ -280,8 +293,8 @@ def findBestGroups(canny, fitted_lines, toleranceM = 0.3, minIntersectDistance =
     for i in range(int(len(fitted_lines) / 2)):
         group_by_index(i, fitted_lines, groups, canny.shape, toleranceM, minIntersectDistance)
         group_by_index(len(fitted_lines)-1-i, fitted_lines, groups, canny.shape, toleranceM, minIntersectDistance)
-
-    if len(fitted_lines) % 2 == 0:
+    
+    if len(fitted_lines) % 2 != 0:
         group_by_index(int(len(fitted_lines) / 2) + 1, fitted_lines, groups, canny.shape, toleranceM, minIntersectDistance)
 
     # Filter groups that only have one line
@@ -327,30 +340,84 @@ def findBestGroups(canny, fitted_lines, toleranceM = 0.3, minIntersectDistance =
         cv.imshow('Filtered Grouped Fitted Lines', img_test)
 
         img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
-        for _, lines in [group1, group2]:
+        for v, lines in [group1, group2]:
             color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
             for vx, vy, x0, y0 in lines:
                 x1, y1 = int(x0 - 1000*vx), int(y0 - 1000*vy)
                 x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
                 cv.line(img_test, (x1, y1), (x2, y2), color, 2)
-                cv.circle(img_test, (x0, y0), 5, (0, 0, 255), -1)
         cv.imshow('Best Lines Grouped', img_test)
 
     return [group1, group2]
 
 
-def findInterestPoints(canny, groups, imageOffset = 100):
-    (_, lines1), (_, lines2) = groups
 
-    img = canny.copy()
-    img = cv.copyMakeBorder(img, 0, imageOffset, 0, imageOffset, cv.BORDER_CONSTANT, value=0)
-    height, width = img.shape
+def getScenarioInfo(canny, best_groups):
+    (vx1, vy1), lines1 = best_groups[0]
+    (vx2, vy2), lines2 = best_groups[1]
+
+    # Horizontal lines should have higher variation in the 'x' axis
+    if vx1 > vx2:
+        horizontal = ((vx1, vy1), lines1)
+        vertical = ((vx2, vy2), lines2)
+    else:
+        vertical = ((vx1, vy1), lines1)
+        horizontal = ((vx2, vy2), lines2)
+
+    # If variation in 'y' is positive, we're on the field's left side
+    if horizontal[0][1] > 0:
+        field_side = 'left'
+    else:
+        field_side = 'right'
+
+    # Order lines
+    if field_side == 'left':
+        horizontal[1].sort(key=lambda l: l[3])
+        vertical[1].sort(key=lambda l: l[2])
+    else:
+        horizontal[1].sort(key=lambda l: -l[3])
+        vertical[1].sort(key=lambda l: -l[2])
+
+    # Remove possible final outliers
+    (v, lines) = vertical
+    if len(lines) > 3:  # expected only 3 vertical lines
+        last = 3 - len(lines)
+        lines = lines[:last]
+        vertical = (v, lines)
+
+    (v, lines) = horizontal
+    if len(lines) > 4:  # expected only 4 horizontal lines
+        idx = 4 - len(lines)
+        if field_side == 'left': lines = lines[abs(idx):]
+        else: lines = lines[:idx]
+        horizontal = (v, lines)
+
+    if debug:
+        img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
+        for vx, vy, x0, y0 in vertical[1]:
+            x1, y1 = int(x0 - 1000*vx), int(y0 - 1000*vy)
+            x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
+            cv.line(img_test, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        for vx, vy, x0, y0 in horizontal[1]:
+            x1, y1 = int(x0 - 1000*vx), int(y0 - 1000*vy)
+            x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
+            cv.line(img_test, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv.imshow('Final lines', img_test)
+
+    return field_side, vertical, horizontal
+
+
+
+def findInterestPoints(canny, vertical, horizontal):
+    (_, lines_vertical) = vertical
+    (_, lines_horizontal) = horizontal
+    height, width = canny.shape
 
     points = []
-    for i in range(len(lines1)):
-        for j in range(len(lines2)):
-            a, c = vector2cartesian(lines1[i]) # y = a*x + c
-            b, d = vector2cartesian(lines2[j]) # y = b*x + d
+    for i in range(len(lines_vertical)):
+        for j in range(len(lines_horizontal)):
+            a, c = vector2cartesian(lines_vertical[i]) # y = a*x + c
+            b, d = vector2cartesian(lines_horizontal[j]) # y = b*x + d
 
             if a == b: # lines are parallel
                 continue
@@ -358,30 +425,38 @@ def findInterestPoints(canny, groups, imageOffset = 100):
             x = (d-c) / (a-b)
             y = (a*d - b*c) / (a-b)
 
-            if (x >= 0 and x <= width + imageOffset) and (y >= 0 and y <= height + imageOffset):
-                points.append((x,y))
+            if (x >= 0 and x <= width) and (y >= 0 and y <= height):
+                point_id = get_point_id(i, j, lines_vertical, lines_horizontal)
+                points.append((point_id, (x,y)))
 
     if debug:
-        img_copy = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
-        for x,y in points:
+        img_copy = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
+        for point_id, (x,y) in points:
             cv.circle(img_copy, (int(x), int(y)), 5, (0, 255, 0), -1)
-        cv.imshow('Interest Points', img_copy)
+            cv.imshow('Interest Points', img_copy)
+        cv.waitKey(0)
 
     return points
 
+
+def compute(filename, use_debug=False):
+    debug = use_debug
+    img, img_gray = loadImage(filename)
+
+    field = getField(img)
+    canny, closed, canny_lines = getCannyLines(img_gray, field)
+    groups = groupLines(closed, canny_lines)
+    fitted_lines = fitGroupedLines(canny, groups)
+    best_groups = findBestGroups(canny, fitted_lines)
+    _, vertical, horizontal = getScenarioInfo(canny, best_groups)
+    points = findInterestPoints(canny, vertical, horizontal)
+
+    return points
 
 
 if __name__ == "__main__":
     for i in range(1, 6):
         filename = 'images/{}.png'.format(i)
-        img, img_gray = loadImage(filename)
-
-        field = getField(img)
-        canny, closed, canny_lines = getCannyLines(img_gray, field)
-        groups = groupLines(closed, canny_lines)
-        fitted_lines = fitGroupedLines(canny, groups)
-        best_groups = findBestGroups(canny, fitted_lines)
-        points = findInterestPoints(canny, best_groups)
-
+        compute(filename, True)
         cv.waitKey(0)
     cv.destroyAllWindows()
