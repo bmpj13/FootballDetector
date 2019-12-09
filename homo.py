@@ -15,22 +15,16 @@ class Homo:
     homography = []
     img = []
 
+    QUALITY_MULTIPLIER = 30
+    GOAL_CENTER = 20.16 * QUALITY_MULTIPLIER
+
     def __init__(self, img, homography_points):
         self.img = img
         self.homography_points = points
 
     def calculate_homography(self):
-        rw_points = np.array([[11,5.5], [29.32,5.5], [12.85,16.5], [27.47,16.5]])
+        rw_points = np.array([[11,5.5],[29.32,5.5],[12.85,16.5],[27.47,16.5]],dtype=np.float32) * self.QUALITY_MULTIPLIER
         self.homography, status = cv.findHomography(np.array(self.homography_points), rw_points)
-
-    def drawGoalCircle(self):
-        rw_goalPoint = np.array([[20.16,0]]).reshape(-1,1,2)
-
-        img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))
-        tuple_goalPoint = (int(img_goalPoint[0][0][0]),int(img_goalPoint[0][0][1]))  
-
-        cv.circle(img,tuple_goalPoint,10,(0,255,0))  
-        cv.imshow('Select 4 Points', self.img) 
 
     def handleMouse(self, event, x, y, flags, param):
         if event == cv.EVENT_LBUTTONDOWN:
@@ -125,9 +119,9 @@ class Homo:
     def show(self):
         cv.imshow(self.window_name, self.img)
         cv.setMouseCallback(self.window_name, self.handleMouse)
-        self.show_loop()
+        self.show_picker_loop()
 
-    def show_loop(self):
+    def show_picker_loop(self):
         while True:
             k = cv.waitKey(1)
 
@@ -149,8 +143,56 @@ class Homo:
                 cv.putText(img, id_text, (x - 10 - 10 * num_chars, y + 5), cv.FONT_HERSHEY_PLAIN, 1, color)
 
             cv.imshow(self.window_name, img)
-            
+        
+        self.action()
+    
+    def build_homography(self):
+        #TODO - Build the homography matrix here
+        pass
 
+    def action(self):
+        self.build_homography()
+        print("Homography matrix built.")
+
+class GoalCircle(Homo):
+    def action(self):
+        super().action()
+        rw_goalPoint = np.array([[self.GOAL_CENTER,0]],dtype=np.float32).reshape(-1,1,2)
+
+        img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
+        tuple_goalPoint = tuple([int(img_goalPoint[0]),int(img_goalPoint[1])])
+
+        cv.circle(self.img,tuple_goalPoint,10,(0,255,0))  
+        cv.imshow('Goal Circle', self.img) 
+
+class GoalArrowDistance(Homo):
+    def action(self):
+        super().action()
+        img_ballPoint = np.array([[float(x),float(y)]]).reshape(-1,1,2)
+        rw_ballPoint = cv.perspectiveTransform(np.array(img_ballPoint), self.homography)[0][0]
+
+        rw_goalPoint = np.array([[self.GOAL_CENTER,0]],dtype=np.float32).reshape(-1,1,2)
+        img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
+        
+        distToGoal = np.linalg.norm(rw_ballPoint-rw_goalPoint)
+
+        img_size = (len(self.img[0]),len(self.img))
+
+        blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER,4), np.uint8)
+        tuple_ballPoint = tuple(np.array(rw_ballPoint, dtype=np.int))
+        tuple_goalPoint = tuple(np.array(rw_goalPoint[0][0], dtype=np.int))
+        arrow = cv.arrowedLine(blank_image,tuple_ballPoint,tuple_goalPoint,(255,0,0,255),thickness=10)
+
+        transformedArrow = cv.warpPerspective(arrow, np.linalg.inv(self.homography), img_size)
+
+        b_channel, g_channel, r_channel = cv.split(self.img)
+        alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
+        img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
+
+        self.img = cv.addWeighted(img_rgba,1,transformedArrow,1,0)
+
+        cv.imshow('Arrow', transformedArrow)
+        cv.imshow('Goal Arrow Distance', self.img) 
 
 if __name__ == "__main__":
     for i in range(1, 4):
@@ -158,6 +200,6 @@ if __name__ == "__main__":
         window_name = 'Select Interest Points'
 
         img, _, _, points = compute(filename, use_debug=False)
-        homo = Homo(img, points)
+        homo = GoalArrowDistance(img, points)
         homo.show()
     cv.destroyAllWindows()
