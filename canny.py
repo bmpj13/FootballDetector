@@ -434,12 +434,12 @@ def findInterestPoints(canny, vertical, horizontal):
         for point_id, (x,y) in points:
             cv.circle(img_copy, (int(x), int(y)), 5, (0, 255, 0), -1)
             cv.imshow('Interest Points', img_copy)
-        cv.waitKey(0)
 
     return points
 
 
 def compute(filename, use_debug=False):
+    global debug
     debug = use_debug
     img, img_gray = loadImage(filename)
 
@@ -451,7 +451,7 @@ def compute(filename, use_debug=False):
     _, vertical, horizontal = getScenarioInfo(canny, best_groups)
     points = findInterestPoints(canny, vertical, horizontal)
 
-    return points
+    return img, vertical, horizontal, points
 
 
 if __name__ == "__main__":
