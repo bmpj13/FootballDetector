@@ -146,13 +146,13 @@ class Homo:
         
         self.action()
     
-    def build_homography(self):
-        #TODO - Build the homography matrix here
-        pass
-
     def action(self):
         self.build_homography()
         print("Homography matrix built.")
+
+    def build_homography(self):
+        #TODO - Build the homography matrix here
+        pass
 
 class GoalCircle(Homo):
     def action(self):
