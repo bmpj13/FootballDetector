@@ -6,6 +6,25 @@ from canny import compute
 
 debug = True
 
+#Offsets allow for drawings to take up the whole field
+X_OFFSET = 50
+Y_OFFSET = 10
+
+RW_DATABASE = [
+    [0 + X_OFFSET,0 + Y_OFFSET], #1
+    [0 + X_OFFSET,5.5 + Y_OFFSET], #2
+    [0 + X_OFFSET,16.5 + Y_OFFSET], #3
+    [11 + X_OFFSET,0 + Y_OFFSET], #4
+    [11 + X_OFFSET,5.5 + Y_OFFSET], #5
+    [11 + X_OFFSET,16.5 + Y_OFFSET], #6
+    [29.32 + X_OFFSET,0 + Y_OFFSET], #7
+    [29.32 + X_OFFSET,5.5 + Y_OFFSET], #8
+    [29.32 + X_OFFSET,16.5 + Y_OFFSET], #9
+    [40.32 + X_OFFSET,0 + Y_OFFSET], #10
+    [40.32 + X_OFFSET,5.5 + Y_OFFSET], #11
+    [40.32 + X_OFFSET,16.5 + Y_OFFSET] #12
+]
+
 class Homo:
     picked = None
     dragging = False
@@ -16,15 +35,11 @@ class Homo:
     img = []
 
     QUALITY_MULTIPLIER = 30
-    GOAL_CENTER = 20.16 * QUALITY_MULTIPLIER
+    GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (Y_OFFSET) * QUALITY_MULTIPLIER]
 
     def __init__(self, img, homography_points):
         self.img = img
         self.homography_points = points
-
-    def calculate_homography(self):
-        rw_points = np.array([[11,5.5],[29.32,5.5],[12.85,16.5],[27.47,16.5]],dtype=np.float32) * self.QUALITY_MULTIPLIER
-        self.homography, status = cv.findHomography(np.array(self.homography_points), rw_points)
 
     def handleMouse(self, event, x, y, flags, param):
         if event == cv.EVENT_LBUTTONDOWN:
@@ -151,13 +166,22 @@ class Homo:
         print("Homography matrix built.")
 
     def build_homography(self):
-        #TODO - Build the homography matrix here
-        pass
+        img_points = []
+        rw_points = []
+
+        for (point_id,(x,y)) in self.homography_points:
+            if point_id == None:
+                continue
+            img_points.append([x,y])
+            rw_points.append(RW_DATABASE[point_id-1])
+
+        rw_points_scaled = np.array(rw_points,dtype=np.float32) * self.QUALITY_MULTIPLIER
+        self.homography, status = cv.findHomography(np.array(img_points), rw_points_scaled)
 
 class GoalCircle(Homo):
     def action(self):
         super().action()
-        rw_goalPoint = np.array([[self.GOAL_CENTER,0]],dtype=np.float32).reshape(-1,1,2)
+        rw_goalPoint = np.array([self.GOAL_CENTER],dtype=np.float32).reshape(-1,1,2)
 
         img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
         tuple_goalPoint = tuple([int(img_goalPoint[0]),int(img_goalPoint[1])])
@@ -166,33 +190,71 @@ class GoalCircle(Homo):
         cv.imshow('Goal Circle', self.img) 
 
 class GoalArrowDistance(Homo):
+    def handleBallPlacement(self, event, x, y, flags, param):
+        if event == cv.EVENT_LBUTTONDOWN:
+            img_ballPoint = np.array([[float(x),float(y)]]).reshape(-1,1,2)
+            rw_ballPoint = cv.perspectiveTransform(np.array(img_ballPoint), self.homography)[0][0]
+
+            rw_goalPoint = np.array([self.GOAL_CENTER],dtype=np.float32).reshape(-1,1,2)
+            img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
+            
+            distToGoal = round(np.linalg.norm(rw_ballPoint-rw_goalPoint)/self.QUALITY_MULTIPLIER,2)
+
+            img_size = (len(self.img[0]),len(self.img))
+
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER,4), np.uint8)
+            tuple_ballPoint = tuple(np.array(rw_ballPoint, dtype=np.int))
+            tuple_goalPoint = tuple(np.array(rw_goalPoint[0][0], dtype=np.int))
+            arrow = cv.arrowedLine(blank_image,tuple_ballPoint,tuple_goalPoint,(255,0,0,255),thickness=10)
+
+            transformedArrow = cv.warpPerspective(arrow, np.linalg.inv(self.homography), img_size)
+
+            b_channel, g_channel, r_channel = cv.split(self.img)
+            alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
+            img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
+
+            self.img = cv.addWeighted(img_rgba,1,transformedArrow,1,0)
+            
+            distText = f"{distToGoal}m"
+
+            cv.putText(self.img, distText, (x - 10 - 10 * len(distText), y + 5), cv.FONT_HERSHEY_PLAIN, 1, (255,255,255))
+
+            #cv.imshow('Arrow', transformedArrow)
+            cv.imshow('Goal Arrow Distance', self.img) 
+
     def action(self):
         super().action()
-        img_ballPoint = np.array([[float(x),float(y)]]).reshape(-1,1,2)
-        rw_ballPoint = cv.perspectiveTransform(np.array(img_ballPoint), self.homography)[0][0]
-
-        rw_goalPoint = np.array([[self.GOAL_CENTER,0]],dtype=np.float32).reshape(-1,1,2)
-        img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
-        
-        distToGoal = np.linalg.norm(rw_ballPoint-rw_goalPoint)
-
-        img_size = (len(self.img[0]),len(self.img))
-
-        blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER,4), np.uint8)
-        tuple_ballPoint = tuple(np.array(rw_ballPoint, dtype=np.int))
-        tuple_goalPoint = tuple(np.array(rw_goalPoint[0][0], dtype=np.int))
-        arrow = cv.arrowedLine(blank_image,tuple_ballPoint,tuple_goalPoint,(255,0,0,255),thickness=10)
-
-        transformedArrow = cv.warpPerspective(arrow, np.linalg.inv(self.homography), img_size)
-
-        b_channel, g_channel, r_channel = cv.split(self.img)
-        alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
-        img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
-
-        self.img = cv.addWeighted(img_rgba,1,transformedArrow,1,0)
-
-        cv.imshow('Arrow', transformedArrow)
         cv.imshow('Goal Arrow Distance', self.img) 
+        cv.setMouseCallback('Goal Arrow Distance', self.handleBallPlacement)
+
+class OffsideLine(Homo):
+    def handlePointPlacement(self, event, x, y, flags, param):
+        if event == cv.EVENT_LBUTTONDOWN:
+            img_offsidePoint = np.array([[float(x),float(y)]]).reshape(-1,1,2)
+            rw_offsidePoint_y = cv.perspectiveTransform(np.array(img_offsidePoint), self.homography)[0][0][1] #Only the y component matters
+
+            img_size = (len(self.img[0]),len(self.img))
+
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER,4), np.uint8)
+            tuple_startPoint = tuple(np.array([0,rw_offsidePoint_y], dtype=np.int))
+            tuple_endPoint = tuple(np.array([len(self.img[0]) * self.QUALITY_MULTIPLIER,rw_offsidePoint_y], dtype=np.int))
+            line = cv.line(blank_image,tuple_startPoint,tuple_endPoint,(255,0,0,255),thickness=10)
+
+            transformedLine= cv.warpPerspective(line, np.linalg.inv(self.homography), img_size)
+
+            b_channel, g_channel, r_channel = cv.split(self.img)
+            alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
+            img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
+
+            self.img = cv.addWeighted(img_rgba,1,transformedLine,1,0)
+            
+            #cv.imshow('Line', transformedLine)
+            cv.imshow('OffsideLine', self.img) 
+
+    def action(self):
+        super().action()
+        cv.imshow('Offside Line', self.img) 
+        cv.setMouseCallback('Offside Line', self.handlePointPlacement)
 
 if __name__ == "__main__":
     for i in range(1, 4):
@@ -200,6 +262,6 @@ if __name__ == "__main__":
         window_name = 'Select Interest Points'
 
         img, _, _, points = compute(filename, use_debug=False)
-        homo = GoalArrowDistance(img, points)
+        homo = OffsideLine(img, points)
         homo.show()
     cv.destroyAllWindows()
