@@ -34,7 +34,7 @@ class Homo:
     homography = []
     img = []
 
-    QUALITY_MULTIPLIER = 30
+    QUALITY_MULTIPLIER = 40
     GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (Y_OFFSET) * QUALITY_MULTIPLIER]
 
     def __init__(self, img, homography_points):
@@ -200,24 +200,30 @@ class GoalArrowDistance(Homo):
 
             img_size = (len(self.img[0]),len(self.img))
 
-            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER,4), np.uint8)
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
             tuple_ballPoint = tuple(np.array(rw_ballPoint, dtype=np.int))
             tuple_goalPoint = tuple(np.array(rw_goalPoint[0][0], dtype=np.int))
-            arrow = cv.arrowedLine(blank_image,tuple_ballPoint,tuple_goalPoint,(255,0,0,255),thickness=10)
+            arrow = cv.arrowedLine(blank_image,tuple_ballPoint,tuple_goalPoint,(255),thickness=20)
 
             transformedArrow = cv.warpPerspective(arrow, np.linalg.inv(self.homography), img_size)
+            transformedArrow = cv.GaussianBlur(transformedArrow,(7,7),sigmaX=0,sigmaY=0)
 
             b_channel, g_channel, r_channel = cv.split(self.img)
             alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
             img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
 
-            self.img = cv.addWeighted(img_rgba,1,transformedArrow,1,0)
+            transformedArrowBGR = cv.cvtColor(transformedArrow, cv.COLOR_GRAY2BGRA)
+            transformedArrowBGR[:, :, 1] = 0
+            transformedArrowBGR[:, :, 2] = 0
+            transformedArrowBGR[:, :, 3] = transformedArrowBGR[:, :, 0] #componente de azul
+
+            self.img = cv.addWeighted(img_rgba,1,transformedArrowBGR,1,0)
             
             distText = f"{distToGoal}m"
 
             cv.putText(self.img, distText, (x - 10 - 10 * len(distText), y + 5), cv.FONT_HERSHEY_PLAIN, 1, (255,255,255))
 
-            #cv.imshow('Arrow', transformedArrow)
+            cv.imshow('Arrow', transformedArrow)
             cv.imshow('Goal Arrow Distance', self.img) 
 
     def action(self):
@@ -244,7 +250,7 @@ class OffsideLine(Homo):
             alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
             img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
 
-            self.img = cv.addWeighted(img_rgba,1,transformedLine,1,0)
+            self.img = cv.addWeighted(img_rgba, 1, transformedLine, 1, 0)
             
             #cv.imshow('Line', transformedLine)
             cv.imshow('OffsideLine', self.img) 
