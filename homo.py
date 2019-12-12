@@ -64,9 +64,7 @@ class Homo:
             self.dragging = False
 
     def handleKeyboard(self, key):
-        if key == ord('0'):
-            self.update_picked_id(0)
-        elif key == ord('1'):
+        if key == ord('1'):
             self.update_picked_id(1)
         elif key == ord('2'):
             self.update_picked_id(2)
@@ -262,6 +260,6 @@ if __name__ == "__main__":
         window_name = 'Select Interest Points'
 
         img, _, _, points = compute(filename, use_debug=False)
-        homo = OffsideLine(img, points)
+        homo = GoalArrowDistance(img, points)
         homo.show()
     cv.destroyAllWindows()
