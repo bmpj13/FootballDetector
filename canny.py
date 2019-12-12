@@ -437,6 +437,24 @@ def findInterestPoints(canny, vertical, horizontal):
 
     return points
 
+def getPlayersMask(img_gray, field):
+    sobelx = cv.Sobel(img_gray, cv.CV_64F, 1, 0, ksize=-1)
+    sobely = cv.Sobel(img_gray, cv.CV_64F, 0, 1, ksize=-1)
+    
+    gradient = cv.add(sobelx, sobely)
+    gradient = cv.convertScaleAbs(gradient)
+
+    _, player_mask = cv.threshold(gradient, 210, 255, cv.THRESH_BINARY)
+    player_mask = cv.bitwise_and(player_mask, player_mask, mask=field)
+    player_mask = cv.morphologyEx(player_mask, cv.MORPH_CLOSE, np.ones((7,5), np.uint8))
+
+    if debug:
+        cv.imshow('Sobel X', cv.convertScaleAbs(sobelx))
+        cv.imshow('Sobel Y', cv.convertScaleAbs(sobely))
+        cv.imshow('Gradient', gradient)
+        cv.imshow('Players Mask', player_mask)
+
+    return player_mask
 
 def compute(filename, use_debug=False):
     global debug
@@ -450,8 +468,9 @@ def compute(filename, use_debug=False):
     best_groups = findBestGroups(canny, fitted_lines)
     _, vertical, horizontal = getScenarioInfo(canny, best_groups)
     points = findInterestPoints(canny, vertical, horizontal)
+    players = getPlayersMask(img_gray, field)
 
-    return img, vertical, horizontal, points
+    return img, vertical, horizontal, points, players
 
 
 if __name__ == "__main__":
