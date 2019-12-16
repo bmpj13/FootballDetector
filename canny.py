@@ -130,15 +130,15 @@ def getField(img):
     hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
 
     # Green HSV: (60, 255, 255)
-    lower_green = np.array([30, 50, 50])
-    upper_green = np.array([80, 255, 255])
+    lower_green = np.array([30, 65, 65])
+    upper_green = np.array([60, 255, 255])
 
     mask = cv.inRange(hsv, lower_green, upper_green)
-    mask = cv.morphologyEx(mask, cv.MORPH_OPEN, np.ones((11,11), np.uint8))
-    mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, np.ones((15,15), np.uint8))
+    mask_open = cv.morphologyEx(mask, cv.MORPH_OPEN, np.ones((11,11), np.uint8))
+    mask_close = cv.morphologyEx(mask_open, cv.MORPH_CLOSE, np.ones((15,15), np.uint8))
 
     # The largest contour is considered the field
-    contours, _ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv.findContours(mask_close, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
     contour = sorted(contours, key=cv.contourArea)[-1]
 
     # Compute field
@@ -147,10 +147,11 @@ def getField(img):
 
     if debug:
         img_debug = cv.bitwise_and(img, img, mask=field)
-        cv.imshow('Field Mask', mask)
+        cv.imshow('Green Filter', mask)
+        cv.imshow('Field Mask', mask_close)
         cv.imshow('Field', img_debug)
 
-    return field
+    return mask, field
 
 
 
@@ -437,40 +438,35 @@ def findInterestPoints(canny, vertical, horizontal):
 
     return points
 
-def getPlayersMask(img_gray, field):
-    sobelx = cv.Sobel(img_gray, cv.CV_64F, 1, 0, ksize=-1)
-    sobely = cv.Sobel(img_gray, cv.CV_64F, 0, 1, ksize=-1)
-    
-    gradient = cv.add(sobelx, sobely)
-    gradient = cv.convertScaleAbs(gradient)
+def getPlayersMask(field, greens_mask):
+    players = cv.bitwise_not(greens_mask)
+    players = cv.bitwise_and(players, players, mask=field)
 
-    _, player_mask = cv.threshold(gradient, 210, 255, cv.THRESH_BINARY)
-    player_mask = cv.bitwise_and(player_mask, player_mask, mask=field)
-    player_mask = cv.morphologyEx(player_mask, cv.MORPH_CLOSE, np.ones((7,5), np.uint8))
+    players_erode = cv.erode(players, np.ones((7,1), np.uint8))
+    players_dilate = cv.dilate(players_erode, np.ones((9,3), np.uint8))
 
     if debug:
-        cv.imshow('Sobel X', cv.convertScaleAbs(sobelx))
-        cv.imshow('Sobel Y', cv.convertScaleAbs(sobely))
-        cv.imshow('Gradient', gradient)
-        cv.imshow('Players Mask', player_mask)
+        cv.imshow('Players Mask', players)
+        cv.imshow('Players Eroded', players_erode)
+        cv.imshow('Players Dilated', players_dilate)
 
-    return player_mask
+    return players_dilate
 
 def compute(filename, use_debug=False):
     global debug
     debug = use_debug
     img, img_gray = loadImage(filename)
 
-    field = getField(img)
+    greens_mask, field = getField(img)
     canny, closed, canny_lines = getCannyLines(img_gray, field)
     groups = groupLines(closed, canny_lines)
     fitted_lines = fitGroupedLines(canny, groups)
     best_groups = findBestGroups(canny, fitted_lines)
     _, vertical, horizontal = getScenarioInfo(canny, best_groups)
     points = findInterestPoints(canny, vertical, horizontal)
-    players = getPlayersMask(img_gray, field)
+    players = getPlayersMask(field, greens_mask)
 
-    return img, vertical, horizontal, points, players
+    return img, points, players
 
 
 if __name__ == "__main__":
