@@ -7,8 +7,8 @@ from canny import compute
 debug = True
 
 #Offsets allow for drawings to take up the whole field
-X_OFFSET = 50
-Y_OFFSET = 10
+X_OFFSET = 0
+Y_OFFSET = 0
 
 RW_DATABASE = [
     [0 + X_OFFSET,0 + Y_OFFSET], #1
@@ -33,13 +33,15 @@ class Homo:
     homography_points = []
     homography = []
     img = []
+    player_mask = []
 
     QUALITY_MULTIPLIER = 40
     GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (Y_OFFSET) * QUALITY_MULTIPLIER]
 
-    def __init__(self, img, homography_points):
+    def __init__(self, img, homography_points, players):
         self.img = img
         self.homography_points = points
+        self.player_mask = players
 
     def handleMouse(self, event, x, y, flags, param):
         if event == cv.EVENT_LBUTTONDOWN:
@@ -92,6 +94,7 @@ class Homo:
             # backspace
             self.remove_picked_point()
         elif key == 13:
+            # enter
             return True
 
         return False
@@ -190,41 +193,48 @@ class GoalCircle(Homo):
 class GoalArrowDistance(Homo):
     def handleBallPlacement(self, event, x, y, flags, param):
         if event == cv.EVENT_LBUTTONDOWN:
-            img_ballPoint = np.array([[float(x),float(y)]]).reshape(-1,1,2)
+            # Ball coords
+            img_ballPoint = np.array([[ float(x), float(y) ]]).reshape(-1,1,2)
             rw_ballPoint = cv.perspectiveTransform(np.array(img_ballPoint), self.homography)[0][0]
 
-            rw_goalPoint = np.array([self.GOAL_CENTER],dtype=np.float32).reshape(-1,1,2)
+            # Goal coords
+            rw_goalPoint = np.array([ self.GOAL_CENTER ], dtype=np.float32).reshape(-1,1,2)
             img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
             
-            distToGoal = round(np.linalg.norm(rw_ballPoint-rw_goalPoint)/self.QUALITY_MULTIPLIER,2)
+            # Distance
+            distToGoal = round(np.linalg.norm(rw_ballPoint - rw_goalPoint) / self.QUALITY_MULTIPLIER, 2)
 
-            img_size = (len(self.img[0]),len(self.img))
+            # Draw arrow on real world and convert back to the image space
+            img_size = (self.img.shape[1], self.img.shape[0])
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER, len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
 
-            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
             tuple_ballPoint = tuple(np.array(rw_ballPoint, dtype=np.int))
             tuple_goalPoint = tuple(np.array(rw_goalPoint[0][0], dtype=np.int))
-            arrow = cv.arrowedLine(blank_image,tuple_ballPoint,tuple_goalPoint,(255),thickness=20)
+            arrow = cv.arrowedLine(blank_image, tuple_ballPoint, tuple_goalPoint, 255, thickness=30)
 
             transformedArrow = cv.warpPerspective(arrow, np.linalg.inv(self.homography), img_size)
-            transformedArrow = cv.GaussianBlur(transformedArrow,(7,7),sigmaX=0,sigmaY=0)
+            transformedArrow = cv.GaussianBlur(transformedArrow, (5,5), sigmaX=0, sigmaY=0)
 
-            b_channel, g_channel, r_channel = cv.split(self.img)
-            alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
-            img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
-
-            transformedArrowBGR = cv.cvtColor(transformedArrow, cv.COLOR_GRAY2BGRA)
+            transformedArrowBGR = cv.cvtColor(transformedArrow, cv.COLOR_GRAY2BGR)
+            b, g, r = cv.split(transformedArrowBGR)
+            transformedArrowBGR[:, :, 0] = transformedArrow
             transformedArrowBGR[:, :, 1] = 0
             transformedArrowBGR[:, :, 2] = 0
-            transformedArrowBGR[:, :, 3] = transformedArrowBGR[:, :, 0] #componente de azul
-
-            self.img = cv.addWeighted(img_rgba,1,transformedArrowBGR,1,0)
             
+            players = self.player_mask
+            players_inv = cv.bitwise_not(players)
+
+            image = self.img.copy()
+            image = cv.bitwise_and(image, image, mask=players_inv)
+            image = cv.addWeighted(image, 1, transformedArrowBGR, 1, 0)
+            image[players > 0] = self.img[players > 0]
+
+
             distText = f"{distToGoal}m"
-
-            cv.putText(self.img, distText, (x - 10 - 10 * len(distText), y + 5), cv.FONT_HERSHEY_PLAIN, 1, (255,255,255))
-
+            cv.putText(image, distText, (x - 10 - 10 * len(distText), y + 5), cv.FONT_HERSHEY_PLAIN, 1, (255,255,255))
             cv.imshow('Arrow', transformedArrow)
-            cv.imshow('Goal Arrow Distance', self.img) 
+            cv.imshow('Arrow Colored', transformedArrowBGR)
+            cv.imshow('Goal Arrow Distance', image) 
 
     def action(self):
         super().action()
@@ -265,7 +275,7 @@ if __name__ == "__main__":
         filename = 'images/{}.png'.format(i)
         window_name = 'Select Interest Points'
 
-        img, _, _, points = compute(filename, use_debug=False)
-        homo = GoalArrowDistance(img, points)
+        img, points, players = compute(filename, use_debug=False)
+        homo = GoalArrowDistance(img, points, players)
         homo.show()
     cv.destroyAllWindows()

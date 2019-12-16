@@ -130,8 +130,8 @@ def getField(img):
     hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
 
     # Green HSV: (60, 255, 255)
-    lower_green = np.array([30, 65, 65])
-    upper_green = np.array([60, 255, 255])
+    lower_green = np.array([30, 50, 50])
+    upper_green = np.array([80, 255, 255])
 
     mask = cv.inRange(hsv, lower_green, upper_green)
     mask_open = cv.morphologyEx(mask, cv.MORPH_OPEN, np.ones((11,11), np.uint8))
