@@ -466,7 +466,7 @@ def compute(filename, use_debug=False):
     points = findInterestPoints(canny, vertical, horizontal)
     players = getPlayersMask(field, greens_mask)
 
-    return img, points, players
+    return img, points, players, field
 
 
 if __name__ == "__main__":

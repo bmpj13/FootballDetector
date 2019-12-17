@@ -7,8 +7,8 @@ from canny import compute
 debug = True
 
 #Offsets allow for drawings to take up the whole field
-X_OFFSET = 0
-Y_OFFSET = 0
+X_OFFSET = 50
+Y_OFFSET = 10
 
 RW_DATABASE = [
     [0 + X_OFFSET,0 + Y_OFFSET], #1
@@ -34,14 +34,16 @@ class Homo:
     homography = []
     img = []
     player_mask = []
+    field_mask = []
 
     QUALITY_MULTIPLIER = 40
-    GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (Y_OFFSET) * QUALITY_MULTIPLIER]
+    GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (0.5 + Y_OFFSET) * QUALITY_MULTIPLIER]
 
-    def __init__(self, img, homography_points, players):
+    def __init__(self, img, homography_points, players, field):
         self.img = img
         self.homography_points = points
         self.player_mask = players
+        self.field_mask = field
 
     def handleMouse(self, event, x, y, flags, param):
         if event == cv.EVENT_LBUTTONDOWN:
@@ -210,13 +212,12 @@ class GoalArrowDistance(Homo):
 
             tuple_ballPoint = tuple(np.array(rw_ballPoint, dtype=np.int))
             tuple_goalPoint = tuple(np.array(rw_goalPoint[0][0], dtype=np.int))
-            arrow = cv.arrowedLine(blank_image, tuple_ballPoint, tuple_goalPoint, 255, thickness=30)
+            arrow = cv.arrowedLine(blank_image, tuple_ballPoint, tuple_goalPoint, 255, thickness=20)
 
             transformedArrow = cv.warpPerspective(arrow, np.linalg.inv(self.homography), img_size)
             transformedArrow = cv.GaussianBlur(transformedArrow, (5,5), sigmaX=0, sigmaY=0)
 
             transformedArrowBGR = cv.cvtColor(transformedArrow, cv.COLOR_GRAY2BGR)
-            b, g, r = cv.split(transformedArrowBGR)
             transformedArrowBGR[:, :, 0] = transformedArrow
             transformedArrowBGR[:, :, 1] = 0
             transformedArrowBGR[:, :, 2] = 0
@@ -249,33 +250,88 @@ class OffsideLine(Homo):
 
             img_size = (len(self.img[0]),len(self.img))
 
-            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER,4), np.uint8)
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
             tuple_startPoint = tuple(np.array([0,rw_offsidePoint_y], dtype=np.int))
             tuple_endPoint = tuple(np.array([len(self.img[0]) * self.QUALITY_MULTIPLIER,rw_offsidePoint_y], dtype=np.int))
-            line = cv.line(blank_image,tuple_startPoint,tuple_endPoint,(255,0,0,255),thickness=10)
+            line = cv.line(blank_image,tuple_startPoint,tuple_endPoint, 255,thickness=10)
 
-            transformedLine= cv.warpPerspective(line, np.linalg.inv(self.homography), img_size)
+            transformedLine = cv.warpPerspective(line, np.linalg.inv(self.homography), img_size)
 
-            b_channel, g_channel, r_channel = cv.split(self.img)
-            alpha_channel = np.ones(b_channel.shape, dtype=b_channel.dtype) * 255
-            img_rgba = cv.merge((b_channel, g_channel, r_channel, alpha_channel))
+            transformedLineBGR = cv.cvtColor(transformedLine, cv.COLOR_GRAY2BGR)
+            transformedLineBGR[:, :, 0] = transformedLine
+            transformedLineBGR[:, :, 1] = 0
+            transformedLineBGR[:, :, 2] = 0
 
-            self.img = cv.addWeighted(img_rgba, 1, transformedLine, 1, 0)
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
+            rectangle = cv.rectangle(blank_image, tuple_endPoint, tuple(np.array([0, Y_OFFSET * self.QUALITY_MULTIPLIER], dtype=np.int)), 255, -1)
+            transformedRectangle = cv.warpPerspective(rectangle, np.linalg.inv(self.homography), img_size)
+            transformedRectangleBGR = cv.cvtColor(transformedRectangle, cv.COLOR_GRAY2BGR)
             
-            #cv.imshow('Line', transformedLine)
-            cv.imshow('OffsideLine', self.img) 
+            players = self.player_mask
+            players_inv = cv.bitwise_not(players)
+            field = self.field_mask
+
+            image = self.img.copy()
+            image = cv.bitwise_and(image, image, mask=players_inv)
+            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedLineBGR[field > 0], 1, 0)
+            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedRectangleBGR[field > 0], -0.1, 0)
+            image[players > 0] = self.img[players > 0]
+            
+            cv.imshow('Line', transformedLine)
+            cv.imshow('Offside Line', image) 
 
     def action(self):
         super().action()
         cv.imshow('Offside Line', self.img) 
         cv.setMouseCallback('Offside Line', self.handlePointPlacement)
 
+
+class FreeKickCircle(Homo):
+    def handlePointPlacement(self, event, x, y, flags, param):
+        if event == cv.EVENT_LBUTTONDOWN:
+            img_ballPoint = np.array([[float(x),float(y)]]).reshape(-1,1,2)
+            rw_ballPoint = cv.perspectiveTransform(np.array(img_ballPoint), self.homography)[0][0]
+
+            img_size = (len(self.img[0]),len(self.img))
+
+            tuple_ballPoint = tuple(np.array(rw_ballPoint, dtype=np.int))
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
+            circumference = cv.circle(blank_image, tuple_ballPoint, 9 * self.QUALITY_MULTIPLIER, 255, 10)
+
+            transformedLine = cv.warpPerspective(circumference, np.linalg.inv(self.homography), img_size)
+
+            transformedLineBGR = cv.cvtColor(transformedLine, cv.COLOR_GRAY2BGR)
+
+            blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
+            circle = cv.circle(blank_image, tuple_ballPoint, 9 * self.QUALITY_MULTIPLIER, 255, -1)
+            transformedRectangle = cv.warpPerspective(circle, np.linalg.inv(self.homography), img_size)
+            transformedRectangleBGR = cv.cvtColor(transformedRectangle, cv.COLOR_GRAY2BGR)
+            
+            players = self.player_mask
+            players_inv = cv.bitwise_not(players)
+            field = self.field_mask
+
+            image = self.img.copy()
+            image = cv.bitwise_and(image, image, mask=players_inv)
+            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedLineBGR[field > 0], 1, 0)
+            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedRectangleBGR[field > 0], -0.1, 0)
+            image[players > 0] = self.img[players > 0]
+            
+            cv.imshow('Line', transformedLine)
+            cv.imshow('Free Kick Circle', image) 
+
+    def action(self):
+        super().action()
+        cv.imshow('Free Kick Circle', self.img) 
+        cv.setMouseCallback('Free Kick Circle', self.handlePointPlacement)
+
+
 if __name__ == "__main__":
     for i in range(1, 4):
         filename = 'images/{}.png'.format(i)
         window_name = 'Select Interest Points'
 
-        img, points, players = compute(filename, use_debug=False)
-        homo = GoalArrowDistance(img, points, players)
+        img, points, players, field = compute(filename, use_debug=False)
+        homo = FreeKickCircle(img, points, players, field)
         homo.show()
     cv.destroyAllWindows()
