@@ -2,6 +2,7 @@ import cv2 as cv
 import numpy as np
 import random
 import math
+import argparse
 from canny import compute
 
 debug = True
@@ -28,7 +29,7 @@ RW_DATABASE = [
 class Homo:
     picked = None
     dragging = False
-    window_name = 'Select Interest Points'
+    window_name = ''
 
     homography_points = []
     homography = []
@@ -39,7 +40,8 @@ class Homo:
     QUALITY_MULTIPLIER = 40
     GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (0.5 + Y_OFFSET) * QUALITY_MULTIPLIER]
 
-    def __init__(self, img, homography_points, players, field):
+    def __init__(self, window_name, img, homography_points, players, field):
+        self.window_name = window_name
         self.img = img
         self.homography_points = points
         self.player_mask = players
@@ -181,17 +183,6 @@ class Homo:
         rw_points_scaled = np.array(rw_points,dtype=np.float32) * self.QUALITY_MULTIPLIER
         self.homography, status = cv.findHomography(np.array(img_points), rw_points_scaled)
 
-class GoalCircle(Homo):
-    def action(self):
-        super().action()
-        rw_goalPoint = np.array([self.GOAL_CENTER],dtype=np.float32).reshape(-1,1,2)
-
-        img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
-        tuple_goalPoint = tuple([int(img_goalPoint[0]),int(img_goalPoint[1])])
-
-        cv.circle(self.img,tuple_goalPoint,10,(0,255,0))  
-        cv.imshow('Goal Circle', self.img) 
-
 class GoalArrowDistance(Homo):
     def handleBallPlacement(self, event, x, y, flags, param):
         if event == cv.EVENT_LBUTTONDOWN:
@@ -233,14 +224,12 @@ class GoalArrowDistance(Homo):
 
             distText = f"{distToGoal}m"
             cv.putText(image, distText, (x - 10 - 10 * len(distText), y + 5), cv.FONT_HERSHEY_PLAIN, 1, (255,255,255))
-            cv.imshow('Arrow', transformedArrow)
-            cv.imshow('Arrow Colored', transformedArrowBGR)
-            cv.imshow('Goal Arrow Distance', image) 
+            cv.imshow(self.window_name, image) 
 
     def action(self):
         super().action()
-        cv.imshow('Goal Arrow Distance', self.img) 
-        cv.setMouseCallback('Goal Arrow Distance', self.handleBallPlacement)
+        cv.imshow(self.window_name, self.img) 
+        cv.setMouseCallback(self.window_name, self.handleBallPlacement)
 
 class OffsideLine(Homo):
     def handlePointPlacement(self, event, x, y, flags, param):
@@ -276,14 +265,13 @@ class OffsideLine(Homo):
             image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedLineBGR[field > 0], 1, 0)
             image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedRectangleBGR[field > 0], -0.1, 0)
             image[players > 0] = self.img[players > 0]
-            
-            cv.imshow('Line', transformedLine)
-            cv.imshow('Offside Line', image) 
+
+            cv.imshow(self.window_name, image) 
 
     def action(self):
         super().action()
-        cv.imshow('Offside Line', self.img) 
-        cv.setMouseCallback('Offside Line', self.handlePointPlacement)
+        cv.imshow(self.window_name, self.img) 
+        cv.setMouseCallback(self.window_name, self.handlePointPlacement)
 
 
 class FreeKickCircle(Homo):
@@ -298,14 +286,14 @@ class FreeKickCircle(Homo):
             blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
             circumference = cv.circle(blank_image, tuple_ballPoint, 9 * self.QUALITY_MULTIPLIER, 255, 10)
 
-            transformedLine = cv.warpPerspective(circumference, np.linalg.inv(self.homography), img_size)
-
-            transformedLineBGR = cv.cvtColor(transformedLine, cv.COLOR_GRAY2BGR)
+            transformedCircumference = cv.warpPerspective(circumference, np.linalg.inv(self.homography), img_size)
+            transformedCircumference = cv.GaussianBlur(transformedCircumference, (5,5), sigmaX=0, sigmaY=0)
+            transformedCircumferenceBGR = cv.cvtColor(transformedCircumference, cv.COLOR_GRAY2BGR)
 
             blank_image = np.zeros((len(self.img[0]) * self.QUALITY_MULTIPLIER,len(self.img) * self.QUALITY_MULTIPLIER), np.uint8)
             circle = cv.circle(blank_image, tuple_ballPoint, 9 * self.QUALITY_MULTIPLIER, 255, -1)
-            transformedRectangle = cv.warpPerspective(circle, np.linalg.inv(self.homography), img_size)
-            transformedRectangleBGR = cv.cvtColor(transformedRectangle, cv.COLOR_GRAY2BGR)
+            transformedCircle = cv.warpPerspective(circle, np.linalg.inv(self.homography), img_size)
+            transformedCircleBGR = cv.cvtColor(transformedCircle, cv.COLOR_GRAY2BGR)
             
             players = self.player_mask
             players_inv = cv.bitwise_not(players)
@@ -313,25 +301,37 @@ class FreeKickCircle(Homo):
 
             image = self.img.copy()
             image = cv.bitwise_and(image, image, mask=players_inv)
-            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedLineBGR[field > 0], 1, 0)
-            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedRectangleBGR[field > 0], -0.1, 0)
+            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedCircumferenceBGR[field > 0], 1, 0)
+            image[field > 0] = cv.addWeighted(image[field > 0], 1, transformedCircleBGR[field > 0], -0.1, 0)
             image[players > 0] = self.img[players > 0]
             
-            cv.imshow('Line', transformedLine)
-            cv.imshow('Free Kick Circle', image) 
+            cv.imshow(self.window_name, image) 
 
     def action(self):
         super().action()
-        cv.imshow('Free Kick Circle', self.img) 
-        cv.setMouseCallback('Free Kick Circle', self.handlePointPlacement)
+        cv.imshow(self.window_name, self.img) 
+        cv.setMouseCallback(self.window_name, self.handlePointPlacement)
 
 
 if __name__ == "__main__":
-    for i in range(1, 4):
-        filename = 'images/{}.png'.format(i)
-        window_name = 'Select Interest Points'
+    parser = argparse.ArgumentParser(description="Drawing stuff on a football pitch")
+    parser.add_argument('--image', help="Path to image", type=str, required=True)
+    parser.add_argument('--type', help="Type of AR functionality", choices=('arrow', 'offside', 'circle'), type=str, required=True)
+    parser.add_argument('--debug', action='store_true')
+    args = parser.parse_args()
 
-        img, points, players, field = compute(filename, use_debug=False)
-        homo = FreeKickCircle(img, points, players, field)
-        homo.show()
-    cv.destroyAllWindows()
+    filename = args.image
+    img, points, players, field = compute(filename, use_debug=args.debug)
+
+    if args.type == 'arrow':
+        homo = GoalArrowDistance('Goal Arrow Distance', img, points, players, field)
+    elif args.type == 'offside':
+        homo = OffsideLine('Offside Line', img, points, players, field)
+    elif args.type == 'circle':
+        homo = FreeKickCircle('Free Kick Circle', img, points, players, field)
+    else:
+        print("Type not available")
+        exit(1)
+
+    homo.show()
+    cv.waitKey(0)
