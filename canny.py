@@ -133,9 +133,13 @@ def getField(img):
     lower_green = np.array([30, 50, 50])
     upper_green = np.array([80, 255, 255])
     mask = cv.inRange(hsv, lower_green, upper_green)
+    
+    # Remove noise and improve mask
+    mask_open = cv.morphologyEx(mask, cv.MORPH_OPEN, np.ones((11,11), np.uint8))
+    mask_close = cv.morphologyEx(mask_open, cv.MORPH_CLOSE, np.ones((15,15), np.uint8))
 
     # The largest contour is considered the field
-    contours, _ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv.findContours(mask_close, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
     contour = sorted(contours, key=cv.contourArea)[-1]
 
     # Compute field
@@ -145,6 +149,7 @@ def getField(img):
     if debug:
         img_debug = cv.bitwise_and(img, img, mask=field)
         cv.imshow('Green Filter', mask)
+        cv.imshow('Field Mask', mask_close)
         cv.imshow('Field', img_debug)
 
     return mask, field
@@ -165,9 +170,9 @@ def getCannyLines(img_gray, field, boundingHeight = 3, minSupport = 0.9, minBlac
         x1, y1, x2, y2 = line
         
         rbox = cv.minAreaRect(np.array([(x1, y1), (x2, y2)], np.float32))
-        x, y, width, _, angle = get_box_values(rbox)
-        if angle == 0.0 or angle == 90.0 or width == 0:
-            continue
+        (x, y), (width, height), angle = rbox
+        if width == 0:
+            width = 1
         
         height = boundingHeight
         pts1 = cv.boxPoints(((x,y), (width, height), angle)).astype(np.int32)
@@ -190,7 +195,7 @@ def getCannyLines(img_gray, field, boundingHeight = 3, minSupport = 0.9, minBlac
     
     if debug:
         img_test = cv.cvtColor(closed, cv.COLOR_GRAY2BGR)
-        for line in canny_lines:
+        for line in lines:
             x1, y1, x2, y2 = line
             cv.line(img_test, (x1, y1), (x2, y2), (0, 0, 255), thickness=1)
         cv.imshow('Canny', canny)
@@ -294,28 +299,20 @@ def findBestGroups(canny, fitted_lines, toleranceM = 0.3, minIntersectDistance =
     if len(fitted_lines) % 2 != 0:
         group_by_index(int(len(fitted_lines) / 2) + 1, fitted_lines, groups, canny.shape, toleranceM, minIntersectDistance)
 
-    # Filter groups that only have one line
-    filtered_groups = []
-    for group in groups:
-        _, group_lines = group
-
-        if len(group_lines) > 1:
-            filtered_groups.append(group)
-
     # Choose the lines that have a maximum cross product
     maxCrossProduct = 0
     group1 = []
     group2 = []
-    for i in range(len(filtered_groups)):
-        for j in range(i + 1, len(filtered_groups)):
-            u, _ = filtered_groups[i]
-            v, _ = filtered_groups[j]
+    for i in range(len(groups)):
+        for j in range(i + 1, len(groups)):
+            u, _ = groups[i]
+            v, _ = groups[j]
             cp = cross_product(u, v)
 
             if cp > maxCrossProduct:
                 maxCrossProduct = cp
-                group1 = filtered_groups[i]
-                group2 = filtered_groups[j]
+                group1 = groups[i]
+                group2 = groups[j]
 
     if debug:
         img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
@@ -326,15 +323,6 @@ def findBestGroups(canny, fitted_lines, toleranceM = 0.3, minIntersectDistance =
                 x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
                 cv.line(img_test, (x1,y1), (x2,y2), color, 2)
         cv.imshow('Grouped Fitted Lines', img_test)
-
-        img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
-        for _, lines in filtered_groups:
-            color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-            for vx, vy, x0, y0 in lines:
-                x1, y1 = int(x0 - 1000*vx), int(y0 - 1000*vy)
-                x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
-                cv.line(img_test, (x1,y1), (x2,y2), color, 2)
-        cv.imshow('Filtered Grouped Fitted Lines', img_test)
 
         img_test = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
         for v, lines in [group1, group2]:
@@ -438,8 +426,8 @@ def getPlayersMask(field, greens_mask):
     players = cv.bitwise_not(greens_mask)
     players = cv.bitwise_and(players, players, mask=field)
 
-    players_erode = cv.erode(players, np.ones((7,1), np.uint8))
-    players_dilate = cv.dilate(players_erode, np.ones((9,3), np.uint8))
+    players_erode = cv.erode(players, np.ones((7,3), np.uint8))
+    players_dilate = cv.dilate(players_erode, np.ones((7,3), np.uint8))
 
     if debug:
         cv.imshow('Players Mask', players)
@@ -454,20 +442,20 @@ def compute(filename, use_debug=False):
     img, img_gray = loadImage(filename)
 
     greens_mask, field = getField(img)
-    # canny, closed, canny_lines = getCannyLines(img_gray, field)
-    # groups = groupLines(closed, canny_lines)
-    # fitted_lines = fitGroupedLines(canny, groups)
-    # best_groups = findBestGroups(canny, fitted_lines)
-    # _, vertical, horizontal = getScenarioInfo(canny, best_groups)
-    # points = findInterestPoints(canny, vertical, horizontal)
+    canny, closed, canny_lines = getCannyLines(img_gray, field)
+    groups = groupLines(closed, canny_lines)
+    fitted_lines = fitGroupedLines(canny, groups)
+    best_groups = findBestGroups(canny, fitted_lines)
+    _, vertical, horizontal = getScenarioInfo(canny, best_groups)
+    points = findInterestPoints(canny, vertical, horizontal)
     # players = getPlayersMask(field, greens_mask)
 
     # return img, points, players, field
 
 
 if __name__ == "__main__":
-    for i in range(1, 6):
-        filename = 'images/{}.png'.format(i)
+    for i in range(1, 4):
+        filename = 'images/os{}.png'.format(i)
         compute(filename, True)
         cv.waitKey(0)
     cv.destroyAllWindows()
