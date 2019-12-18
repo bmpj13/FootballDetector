@@ -132,13 +132,10 @@ def getField(img):
     # Green HSV: (60, 255, 255)
     lower_green = np.array([30, 50, 50])
     upper_green = np.array([80, 255, 255])
-
     mask = cv.inRange(hsv, lower_green, upper_green)
-    mask_open = cv.morphologyEx(mask, cv.MORPH_OPEN, np.ones((11,11), np.uint8))
-    mask_close = cv.morphologyEx(mask_open, cv.MORPH_CLOSE, np.ones((15,15), np.uint8))
 
     # The largest contour is considered the field
-    contours, _ = cv.findContours(mask_close, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
     contour = sorted(contours, key=cv.contourArea)[-1]
 
     # Compute field
@@ -148,7 +145,6 @@ def getField(img):
     if debug:
         img_debug = cv.bitwise_and(img, img, mask=field)
         cv.imshow('Green Filter', mask)
-        cv.imshow('Field Mask', mask_close)
         cv.imshow('Field', img_debug)
 
     return mask, field
@@ -458,15 +454,15 @@ def compute(filename, use_debug=False):
     img, img_gray = loadImage(filename)
 
     greens_mask, field = getField(img)
-    canny, closed, canny_lines = getCannyLines(img_gray, field)
-    groups = groupLines(closed, canny_lines)
-    fitted_lines = fitGroupedLines(canny, groups)
-    best_groups = findBestGroups(canny, fitted_lines)
-    _, vertical, horizontal = getScenarioInfo(canny, best_groups)
-    points = findInterestPoints(canny, vertical, horizontal)
-    players = getPlayersMask(field, greens_mask)
+    # canny, closed, canny_lines = getCannyLines(img_gray, field)
+    # groups = groupLines(closed, canny_lines)
+    # fitted_lines = fitGroupedLines(canny, groups)
+    # best_groups = findBestGroups(canny, fitted_lines)
+    # _, vertical, horizontal = getScenarioInfo(canny, best_groups)
+    # points = findInterestPoints(canny, vertical, horizontal)
+    # players = getPlayersMask(field, greens_mask)
 
-    return img, points, players, field
+    # return img, points, players, field
 
 
 if __name__ == "__main__":
