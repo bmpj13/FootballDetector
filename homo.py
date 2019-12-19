@@ -98,7 +98,7 @@ class Homo:
             # backspace
             self.remove_picked_point()
         elif key == 13:
-            # enter
+            # return
             return True
 
         return False
