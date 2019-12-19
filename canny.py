@@ -149,7 +149,7 @@ def getField(img):
     if debug:
         img_debug = cv.bitwise_and(img, img, mask=field)
         cv.imshow('Green Filter', mask)
-        cv.imshow('Field Mask', mask_close)
+        cv.imshow('Field Mask', field)
         cv.imshow('Field', img_debug)
 
     return mask, field
@@ -195,7 +195,7 @@ def getCannyLines(img_gray, field, boundingHeight = 3, minSupport = 0.9, minBlac
     
     if debug:
         img_test = cv.cvtColor(closed, cv.COLOR_GRAY2BGR)
-        for line in lines:
+        for line in canny_lines:
             x1, y1, x2, y2 = line
             cv.line(img_test, (x1, y1), (x2, y2), (0, 0, 255), thickness=1)
         cv.imshow('Canny', canny)
@@ -266,7 +266,7 @@ def fitGroupedLines(canny, bins):
             color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
             x1, y1 = int(x0 - 1000*vx), int(y0 - 1000*vy)
             x2, y2 = int(x0 + 1000*vx), int(y0 + 1000*vy)
-            cv.line(img_test, (x1,y1), (x2,y2), color, 2)
+            cv.line(img_test, (x1,y1), (x2,y2), (0, 0, 255), 2)
         cv.imshow('Fitted Lines', img_test)
 
     return fitted_lines
@@ -417,7 +417,9 @@ def findInterestPoints(canny, vertical, horizontal):
     if debug:
         img_copy = cv.cvtColor(canny, cv.COLOR_GRAY2BGR)
         for point_id, (x,y) in points:
+            num_chars = len(str(point_id))
             cv.circle(img_copy, (int(x), int(y)), 5, (0, 255, 0), -1)
+            cv.putText(img_copy, str(point_id), (int(x) - 10 - 10 * num_chars, int(y) + 5), cv.FONT_HERSHEY_PLAIN, 1, (0, 255, 0))
             cv.imshow('Interest Points', img_copy)
 
     return points
@@ -448,14 +450,14 @@ def compute(filename, use_debug=False):
     best_groups = findBestGroups(canny, fitted_lines)
     _, vertical, horizontal = getScenarioInfo(canny, best_groups)
     points = findInterestPoints(canny, vertical, horizontal)
-    # players = getPlayersMask(field, greens_mask)
+    players = getPlayersMask(field, greens_mask)
 
-    # return img, points, players, field
+    return img, points, players, field
 
 
 if __name__ == "__main__":
-    for i in range(1, 4):
-        filename = 'images/os{}.png'.format(i)
+    for i in range(1, 5):
+        filename = 'images/fk{}.png'.format(i)
         compute(filename, True)
         cv.waitKey(0)
     cv.destroyAllWindows()
