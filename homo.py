@@ -38,7 +38,7 @@ class Homo:
     field_mask = []
 
     QUALITY_MULTIPLIER = 40
-    GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (0.5 + Y_OFFSET) * QUALITY_MULTIPLIER]
+    GOAL_CENTER = [(20.16 + X_OFFSET) * QUALITY_MULTIPLIER, (0.25 + Y_OFFSET) * QUALITY_MULTIPLIER]
 
     def __init__(self, window_name, img, homography_points, players, field):
         self.window_name = window_name
@@ -195,7 +195,7 @@ class GoalArrowDistance(Homo):
             img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
             
             # Distance
-            distToGoal = round(np.linalg.norm(rw_ballPoint - rw_goalPoint) / self.QUALITY_MULTIPLIER, 2)
+            distToGoal = round(np.linalg.norm(rw_ballPoint - rw_goalPoint) / self.QUALITY_MULTIPLIER, 2) + 0.25
 
             # Draw arrow on real world and convert back to the image space
             img_size = (self.img.shape[1], self.img.shape[0])
