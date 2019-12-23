@@ -192,7 +192,6 @@ class GoalArrowDistance(Homo):
 
             # Goal coords
             rw_goalPoint = np.array([ self.GOAL_CENTER ], dtype=np.float32).reshape(-1,1,2)
-            img_goalPoint = cv.perspectiveTransform(np.array(rw_goalPoint), np.linalg.inv(self.homography))[0][0]
             
             # Distance
             distToGoal = round(np.linalg.norm(rw_ballPoint - rw_goalPoint) / self.QUALITY_MULTIPLIER, 2) + 0.25
